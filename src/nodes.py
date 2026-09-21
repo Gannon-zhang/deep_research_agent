@@ -10,14 +10,16 @@ from src.state import State
 
 load_dotenv()
 
-llm = ChatOpenAI(
-    model=os.getenv("MODEL_NAME", "google/gemma-4-e4b"),
-    base_url=os.getenv("OPENAI_BASE_URL", "http://127.0.0.1:1234/v1"),
-    api_key=SecretStr(
-        os.getenv("OPENAI_API_KEY", "sk-lm-1kMoXYvm:0itS4dtPxnOV784Ii08t")
-    ),
-    temperature=0.7,
-)
+
+def get_llm(temperature: float = 0.7) -> ChatOpenAI:
+    return ChatOpenAI(
+        model=os.getenv("MODEL_NAME", "google/gemma-4-e4b"),
+        base_url=os.getenv("OPENAI_BASE_URL", "http://127.0.0.1:1234/v1"),
+        api_key=SecretStr(
+            os.getenv("OPENAI_API_KEY", "sk-lm-1kMoXYvm:0itS4dtPxnOV784Ii08t")
+        ),
+        temperature=temperature,
+    )
 
 
 def planner_node(state: State) -> Dict[str, Any]:
@@ -29,7 +31,7 @@ def planner_node(state: State) -> Dict[str, Any]:
     prompt = ChatPromptTemplate.from_template(
         "你是一个资深产业分析师。请针对课题《{topic}》，列出 3 个核心调研要点与子问题，分行输出。"
     )
-    chain = prompt | llm
+    chain = prompt | get_llm()
     response = chain.invoke({"topic": topic})
 
     return {
@@ -56,7 +58,7 @@ def researcher_node(state: State) -> Dict[str, Any]:
         "课题: {topic}\n调研计划: {plan}{feedback}\n"
         "请提供一条有具体数据、案例支撑的关键事实论据（100字左右）。"
     )
-    chain = prompt | llm
+    chain = prompt | get_llm()
     response = chain.invoke(
         {"topic": topic, "plan": plan, "feedback": feedback_context}
     )
@@ -104,7 +106,7 @@ def writer_node(state: State) -> Dict[str, Any]:
         "课题: {topic}\n\n参考论据:\n{data_text}\n\n"
         "请结合上述论据，写一份结构清晰、结论明确的深度调研摘要（Markdown 格式）。"
     )
-    chain = prompt | llm
+    chain = prompt | get_llm()
     response = chain.invoke({"topic": topic, "data_text": data_text})
 
     return {"final_report": response.content, "messages": ["Writer 已完成研报撰写。"]}

@@ -1,7 +1,16 @@
+from enum import StrEnum
+
 from langgraph.graph import StateGraph, START, END
 
 from src.state import State
 from src.nodes import planner_node, researcher_node, evaluator_node, writer_node
+
+
+class NodeName(StrEnum):
+    PLANNER = "planner"
+    RESEARCHER = "researcher"
+    EVALUATOR = "evaluator"
+    WRITER = "writer"
 
 
 def should_continue(state: State) -> str:
@@ -10,8 +19,8 @@ def should_continue(state: State) -> str:
     retry_count = state.retry_count
 
     if is_approved or retry_count >= 2:
-        return "writer"
-    return "researcher"
+        return NodeName.WRITER
+    return NodeName.RESEARCHER
 
 
 def build_graph():
@@ -19,28 +28,28 @@ def build_graph():
     workflow = StateGraph(State)
 
     # 2. 注册所有节点
-    workflow.add_node("planner", planner_node)
-    workflow.add_node("researcher", researcher_node)
-    workflow.add_node("evaluator", evaluator_node)
-    workflow.add_node("writer", writer_node)
+    workflow.add_node(NodeName.PLANNER, planner_node)
+    workflow.add_node(NodeName.RESEARCHER, researcher_node)
+    workflow.add_node(NodeName.EVALUATOR, evaluator_node)
+    workflow.add_node(NodeName.WRITER, writer_node)
 
     # 3. 连接固定边
-    workflow.add_edge(START, "planner")
-    workflow.add_edge("planner", "researcher")
-    workflow.add_edge("researcher", "evaluator")
+    workflow.add_edge(START, NodeName.PLANNER)
+    workflow.add_edge(NodeName.PLANNER, NodeName.RESEARCHER)
+    workflow.add_edge(NodeName.RESEARCHER, NodeName.EVALUATOR)
 
     # 4. 连接条件分支边（evaluator 执行完后的流向）
     workflow.add_conditional_edges(
-        "evaluator",
+        NodeName.EVALUATOR,
         should_continue,
         {
-            "researcher": "researcher",  # 打回继续调研
-            "writer": "writer",  # 通过进入撰写
+            NodeName.RESEARCHER: NodeName.RESEARCHER,  # 打回继续调研
+            NodeName.WRITER: NodeName.WRITER,  # 通过进入撰写
         },
     )
 
     # 5. writer 完成后流向结束
-    workflow.add_edge("writer", END)
+    workflow.add_edge(NodeName.WRITER, END)
 
     # 6. 编译并返回可运行图
     return workflow.compile()
