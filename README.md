@@ -55,7 +55,7 @@ deep_research_agent/
 ├── pyproject.toml                     # 项目依赖与元数据管理
 ├── README.md                          # 项目工程文档
 ├── run_dev.py                         # 本地快速体验与调度脚本
-├── tests/                             # 自动化测试套件 (21 个单元测试)
+├── tests/                             # 自动化测试套件 (28 个单元测试)
 │   ├── __init__.py
 │   ├── test_schemas.py                # 领域实体、去重与状态测试
 │   ├── test_graph.py                  # 工作流图编译与条件路由决策测试
@@ -159,16 +159,73 @@ uv run uvicorn src.api.app:api --host 0.0.0.0 --port 8000 --reload
 
 ---
 
-## API 接口与 SSE 流式协议
+## API 接口与人机协同流式协议
 
-### 端点：`POST /api/research/stream`
+系统原生支持 **Human-in-the-loop（人机协同审核）** 两阶段模式：
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as 用户 / 前端
+    participant API as FastAPI 接口
+    participant Graph as LangGraph (Checkpointer)
+    
+    Note over User,Graph: 【第一阶段：启动课题规划与断点挂起】
+    User->>API: POST /api/research/start (topic)
+    API->>Graph: ainvoke(input, config={"configurable": {"thread_id": task_id}})
+    Graph-->>Graph: 执行 planner 节点后触发 interrupt_after 自动挂起
+    API->>User: 返回 task_id 与生成的 plan 检索大纲 (queries, rationale)
+
+    Note over User,Graph: 【第二阶段：人工审核提纲、状态覆盖与恢复执行】
+    User->>API: POST /api/research/resume (task_id, 修正后 queries/plan)
+    API->>Graph: aupdate_state(config, {"plan": revised_plan}) 覆盖状态
+    API->>Graph: astream_events(None, config=config) 从断点恢复流转
+    Graph-->>API: 调度 researcher (并发检索) -> evaluator -> writer
+    API-->>User: 以 SSE 流式逐字推送节点状态与最终 Markdown 研报
+```
+
+### 1. 第一阶段启动：`POST /api/research/start`
+- **Content-Type**: `application/json`
+
+#### 请求体示例
+```json
+{
+  "topic": "2026年具身智能机器人量产落地的主要工程瓶颈",
+  "task_id": "可选自定义UUID"
+}
+```
+
+#### 响应示例
+```json
+{
+  "task_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "topic": "2026年具身智能机器人量产落地的主要工程瓶颈",
+  "plan": {
+    "queries": [
+      "具身智能 旋转执行器 成本",
+      "人形机器人 灵巧手 传感器瓶颈",
+      "具身智能 2026 量产交付预期"
+    ],
+    "rationale": "围绕执行器核心硬件、末端感知与产业落地周期拆解"
+  },
+  "status": "awaiting_approval",
+  "message": "Planner 规划已生成，工作流在断点处成功挂起，等待人工确认或修改检索大纲。"
+}
+```
+
+### 2. 第二阶段恢复：`POST /api/research/resume`
 - **Content-Type**: `application/json`
 - **Accept**: `text/event-stream`
 
 #### 请求体示例
 ```json
 {
-  "topic": "2026年具身智能商业化落地的主要工程瓶颈"
+  "task_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "queries": [
+    "具身智能 谐波减速器 国产替代率 2026",
+    "人形机器人 灵巧手 触觉传感器量产",
+    "具身智能 算力与车载芯片对比"
+  ]
 }
 ```
 
@@ -177,11 +234,11 @@ uv run uvicorn src.api.app:api --host 0.0.0.0 --port 8000 --reload
 
 | 事件类型 (`type`) | 说明 | 载荷示例 (`data`) |
 | :--- | :--- | :--- |
-| `node_start` | 工作流节点启动 | `{"type": "node_start", "node": "planner"}` |
+| `node_start` | 工作流节点启动 | `{"type": "node_start", "node": "researcher"}` |
 | `status_update` | 节点完成阶段性任务 | `{"type": "status_update", "node": "researcher", "message": "新增 4 条事实素材"}` |
 | `report_token` | Writer 节点研报 Token 逐字增量 | `{"type": "report_token", "content": "近年来，人形机器人..."}` |
 | `complete` | 全流程正常结束信号 | `{"type": "complete"}` |
-| `error` | 异常报错信息 | `{"type": "error", "message": "API key invalid"}` |
+| `error` | 异常报错信息 | `{"type": "error", "message": "未找到 task_id"}` |
 
 ---
 

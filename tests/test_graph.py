@@ -115,6 +115,47 @@ class TestGraphWorkflow(unittest.TestCase):
         self.assertEqual(len(result["collected_data"]), 3)
         self.assertIn("Researcher 新增获取 3 条事实素材", result["messages"][0])
 
+    def test_interrupt_after_planner_and_resume(self):
+        """测试在 Planner 执行后自动断点中断，支持 aupdate_state 覆盖状态与保留下一步。"""
+        import uuid
+        from langgraph.checkpoint.memory import MemorySaver
+
+        mock_plan = Plan(queries=["原词1", "原词2"], rationale="原规划")
+
+        async def mock_planner(state: State):
+            return {
+                "plan": mock_plan,
+                "messages": ["Planner mock 生成了 2 个检索词"],
+            }
+
+        with patch("src.agent.workflow.planner_node", mock_planner):
+            test_saver = MemorySaver()
+            test_graph = build_graph(
+                checkpointer=test_saver, interrupt_after=[NodeName.PLANNER]
+            )
+
+        task_id = str(uuid.uuid4())
+        config = {"configurable": {"thread_id": task_id}}
+
+        async def run_test():
+            # 第一阶段：执行至 Planner 挂起
+            await test_graph.ainvoke({"topic": "测试课题"}, config=config)
+
+            # 验证命中中断挂起，下一节点为 researcher
+            state1 = await test_graph.aget_state(config)
+            self.assertEqual(state1.next, (NodeName.RESEARCHER,))
+            self.assertEqual(state1.values.get("plan").queries, ["原词1", "原词2"])
+
+            # 模拟人工修改：覆盖更新状态
+            revised_plan = Plan(queries=["修正词A", "修正词B"], rationale="人工修正")
+            await test_graph.aupdate_state(config, {"plan": revised_plan})
+
+            state2 = await test_graph.aget_state(config)
+            self.assertEqual(state2.values.get("plan").queries, ["修正词A", "修正词B"])
+            self.assertEqual(state2.next, (NodeName.RESEARCHER,))
+
+        asyncio.run(run_test())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,7 +2,12 @@
 
 from src.schemas.domain import Evidence, Plan, EvaluationResult, merge_evidences
 from src.schemas.state import State
-from src.schemas.api import ResearchRequest
+from src.schemas.api import (
+    ResearchRequest,
+    StartResearchRequest,
+    StartResearchResponse,
+    ResumeResearchRequest,
+)
 
 __all__ = [
     "Evidence",
@@ -11,4 +16,7 @@ __all__ = [
     "merge_evidences",
     "State",
     "ResearchRequest",
+    "StartResearchRequest",
+    "StartResearchResponse",
+    "ResumeResearchRequest",
 ]
