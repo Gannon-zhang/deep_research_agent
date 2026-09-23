@@ -9,8 +9,8 @@ from src.schemas.state import State
 logger = get_logger(__name__)
 
 
-def evaluator_node(state: State) -> Dict[str, Any]:
-    """质检主管节点：严格审查当前已积累素材的深度与完备性。
+async def evaluator_node(state: State) -> Dict[str, Any]:
+    """质检主管节点：严格审查当前已积累素材的深度与完备性（异步协程）。
 
     模拟首席行业分析主管视角，对已收集的全部论据素材进行结构化质量评分与批判性审查：
     - 审查指标是否具体（杜绝空洞公关说辞，强调参数、时间节点、工程瓶颈等硬核数据）；
@@ -43,7 +43,7 @@ def evaluator_node(state: State) -> Dict[str, Any]:
     )
     chain = EVALUATOR_PROMPT | structured_evaluator
 
-    eval_result: EvaluationResult = chain.invoke(
+    eval_result: EvaluationResult = await chain.ainvoke(
         {"topic": topic, "count": len(collected_data), "evidence_text": evidence_text}
     )
 

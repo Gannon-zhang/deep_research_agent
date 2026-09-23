@@ -23,8 +23,13 @@ class Settings:
         self.openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
         self.model_name: str = os.getenv("MODEL_NAME", "google/gemma-4-e4b")
 
-        # 外部搜索服务配置 (Tavily)
+        # 外部搜索服务配置 (Tavily, DuckDuckGo 等)
         self.tavily_api_key: Optional[str] = os.getenv("TAVILY_API_KEY")
+        self.search_provider: str = os.getenv("SEARCH_PROVIDER", "auto").lower()
+        self.search_fallback_enabled: bool = (
+            os.getenv("SEARCH_FALLBACK_ENABLED", "true").lower() == "true"
+        )
+        self.search_timeout: float = float(os.getenv("SEARCH_TIMEOUT", "10.0"))
 
         # 工作流调度与业务熔断参数
         self.max_retry_count: int = int(os.getenv("MAX_RETRY_COUNT", "2"))

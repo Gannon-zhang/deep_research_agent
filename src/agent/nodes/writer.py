@@ -8,8 +8,8 @@ from src.schemas.state import State
 logger = get_logger(__name__)
 
 
-def writer_node(state: State) -> Dict[str, Any]:
-    """研报撰写节点：基于所有收集到的可靠论据撰写深度行业研报。
+async def writer_node(state: State) -> Dict[str, Any]:
+    """研报撰写节点：基于所有收集到的可靠论据撰写深度行业研报（异步协程）。
 
     严格依据收集到的事实与数据资料进行结构化 Markdown 报告生成，
     确保观点与论据具备学术/智库级的一致性，且正文标注引用角标（如 [1]、[2]），
@@ -42,7 +42,7 @@ def writer_node(state: State) -> Dict[str, Any]:
 
     # 撰写阶段适当提高采样温度，以兼顾专业严密性与语言表达的流畅度
     chain = WRITER_PROMPT | get_llm(temperature=0.4)
-    response = chain.invoke({"topic": topic, "context": context_str})
+    response = await chain.ainvoke({"topic": topic, "context": context_str})
 
     logger.info("深度研报撰写完成 | 报告文本总字符数: %d", len(response.content))
 

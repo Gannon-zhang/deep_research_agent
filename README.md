@@ -20,9 +20,8 @@
 
 ## 核心特性
 
-- **模块化工程解耦**：采用核心基础设施、领域模型、提示词资产、外部工具、工作流节点与 Web 接口的分层架构，关注点清晰分离。
-- **闭环智能质检与动态路由**：内置 `Evaluator` 质检主管节点，对搜集素材的硬核指标与覆盖度进行 1-10 分结构化判定；不达标自动下发补充检索关键词进行靶向补漏。
-- **熔断保护机制**：针对质检打回设定最大重试阈值（`MAX_RETRY_COUNT`），防止循环耗尽模型 Token 与搜索额度。
+- **全系统原生异步化与并发检索**：工作流所有节点（Planner, Researcher, Evaluator, Writer）均采用 `async def` 协程驱动，其中 `Researcher` 采用 `asyncio.gather` 并发分发多个关键词网络检索，显著降低 I/O 等待时延。
+- **高可用多搜索引擎与自动兜底**：支持 **Tavily**（同步/异步）与免密钥的 **DuckDuckGo**；具备 `FallbackSearchEngine` 自动兜底机制，主引擎故障或额度耗尽时自动无缝降级，全链路保障稳定性。
 - **严格的事实角标引用**：`Writer` 节点在陈述事实与数据时强制添加 `[1]`、`[2]` 角标，并在文末输出结构化参考来源。
 - **全链路 SSE 实时流式传输**：基于 FastAPI 与 LangGraph `astream_events`，支持前端逐字流式打字效果与工作流节点状态追踪。
 - **工程化日志体系**：全链路采用标准 `logging` 模块，统一时间格式、日志级别与模块溯源，告别原始 `print`。
@@ -34,7 +33,7 @@
 ```mermaid
 flowchart TD
     Start([START]) --> Planner[Planner: 课题多维度规划]
-    Planner --> Researcher[Researcher: 外部事实检索]
+    Planner --> Researcher[Researcher: 外部事实检索\n(Tavily / DuckDuckGo 自动兜底)]
     Researcher --> Evaluator[Evaluator: 深度质量审查]
 
     Evaluator -- "评分 < 7 且未达重试上限\n(打回补漏)" --> Researcher
@@ -56,11 +55,12 @@ deep_research_agent/
 ├── pyproject.toml                     # 项目依赖与元数据管理
 ├── README.md                          # 项目工程文档
 ├── run_dev.py                         # 本地快速体验与调度脚本
-├── tests/                             # 自动化测试套件 (13 个单元测试)
+├── tests/                             # 自动化测试套件 (21 个单元测试)
 │   ├── __init__.py
 │   ├── test_schemas.py                # 领域实体、去重与状态测试
 │   ├── test_graph.py                  # 工作流图编译与条件路由决策测试
-│   └── test_api.py                    # FastAPI 路由与 OpenAPI 规范测试
+│   ├── test_api.py                    # FastAPI 路由与 OpenAPI 规范测试
+│   └── test_search.py                 # 同步/异步检索、多引擎与自动兜底测试
 └── src/
     ├── __init__.py
     ├── core/                          # [核心基础设施层]
@@ -80,7 +80,10 @@ deep_research_agent/
     │   └── writer.py                  # Writer 研报撰写 Prompt 模板
     ├── tools/                         # [外部能力扩展层]
     │   ├── __init__.py
-    │   └── search.py                  # TavilyClient 延迟初始化与 web_search_tool 容错封装
+    │   ├── base.py                    # 搜索提供者抽象基类 (BaseSearchProvider)
+    │   ├── tavily.py                  # Tavily 同步与异步检索实现 (TavilySearchProvider)
+    │   ├── duckduckgo.py              # 免 Key 的 DuckDuckGo 搜索实现 (DuckDuckGoSearchProvider)
+    │   └── search.py                  # Fallback 自动兜底调度引擎与主入口函数
     ├── agent/                         # [智能体编排核心层]
     │   ├── __init__.py
     │   ├── router.py                  # NodeName 枚举与 should_continue 条件路由
@@ -117,6 +120,9 @@ MODEL_NAME=google/gemma-4-e4b
 
 # 搜索工具配置（Tavily 专为 LLM 设计）
 TAVILY_API_KEY=tvly-your-tavily-api-key
+SEARCH_PROVIDER=auto              # 优先策略: auto (优先 Tavily，失败兜底 DuckDuckGo) | tavily | duckduckgo
+SEARCH_FALLBACK_ENABLED=true      # 是否开启故障自动兜底降级
+SEARCH_TIMEOUT=10.0               # 搜索超时时间（秒）
 
 # 工作流与服务配置
 MAX_RETRY_COUNT=2

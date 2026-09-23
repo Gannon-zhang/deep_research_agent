@@ -4,6 +4,7 @@
 并在终端输出执行统计与最终产出的 Markdown 研报。
 """
 
+import asyncio
 import sys
 from src.agent import app
 from src.core.logger import get_logger, setup_logging
@@ -11,8 +12,8 @@ from src.core.logger import get_logger, setup_logging
 logger = get_logger("run_dev")
 
 
-def main() -> None:
-    """初始化运行环境并执行深度调研任务。"""
+async def main() -> None:
+    """初始化运行环境并异步执行深度调研任务。"""
     # 1. 初始化标准日志输出
     setup_logging()
 
@@ -24,11 +25,11 @@ def main() -> None:
         "is_approved": False,
     }
 
-    logger.info("====== 开始运行 DeepResearch Agent 流程 ======")
+    logger.info("====== 开始运行 DeepResearch Agent 异步流程 ======")
     logger.info("调研目标课题: %s", initial_input["topic"])
 
-    # 2. 执行图调度并获取最终输出
-    result = app.invoke(initial_input)
+    # 2. 执行异步图调度并获取最终输出
+    result = await app.ainvoke(initial_input)
 
     # 3. 输出执行统计信息
     collected_count = len(result.get("collected_data", []))
@@ -51,4 +52,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

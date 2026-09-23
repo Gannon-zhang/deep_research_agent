@@ -21,7 +21,7 @@ def build_graph() -> CompiledStateGraph:
                                                 (writer) -> [END]
 
     Returns:
-        CompiledStateGraph: 可直接 invoke() 或 astream_events() 的编译后执行图。
+        CompiledStateGraph: 原生支持 ainvoke() 与 astream_events() 的编译后异步执行图。
     """
     workflow = StateGraph(State)
 

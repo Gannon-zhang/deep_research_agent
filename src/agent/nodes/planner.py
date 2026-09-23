@@ -9,8 +9,8 @@ from src.schemas.state import State
 logger = get_logger(__name__)
 
 
-def planner_node(state: State) -> Dict[str, Any]:
-    """规划节点：分析课题背景并制定多维度检索方案。
+async def planner_node(state: State) -> Dict[str, Any]:
+    """规划节点：分析课题背景并制定多维度检索方案（异步协程）。
 
     基于大模型结构化输出能力，将复杂的研究课题拆解为 3~4 个具有针对性的
     外部检索关键词，并提供逻辑严谨的拆解依据。
@@ -34,7 +34,7 @@ def planner_node(state: State) -> Dict[str, Any]:
     structured_llm = get_llm(temperature=0.2).with_structured_output(Plan)
     chain = PLANNER_PROMPT | structured_llm
 
-    plan_result: Plan = chain.invoke({"topic": topic})
+    plan_result: Plan = await chain.ainvoke({"topic": topic})
 
     logger.info(
         "Planner 规划完成 | 拆解关键词数: %d | 关键词: %s",
