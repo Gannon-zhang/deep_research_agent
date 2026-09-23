@@ -165,6 +165,68 @@ class TestGraphWorkflow(unittest.TestCase):
 
         asyncio.run(run_test())
 
+    def test_automated_end_to_end_workflow(self):
+        """测试关闭 HITL 时的全自动化闭环流程：一键从 START 执行到 WRITER 产出 final_report。"""
+        mock_plan = Plan(queries=["自动化测试词"], rationale="自动规划理由")
+        mock_evidence = [
+            Evidence(
+                title="自动化测试报告素材",
+                url="https://example.com/test",
+                snippet="关键测试事实内容",
+            )
+        ]
+        mock_eval = EvaluationResult(
+            score=9,
+            is_approved=True,
+            critique="内容详实合格",
+            suggested_queries=[],
+        )
+
+        async def mock_planner(state: State):
+            return {"plan": mock_plan, "messages": ["Planner 完成自动化规划"]}
+
+        async def mock_researcher(state: State):
+            return {
+                "collected_data": mock_evidence,
+                "messages": ["Researcher 素材搜集完毕"],
+            }
+
+        async def mock_evaluator(state: State):
+            return {"evaluation": mock_eval, "messages": ["Evaluator 质检通过"]}
+
+        async def mock_writer(state: State):
+            return {
+                "final_report": "# 自动化研报\n这是一份自动化测试生成的完整研报。",
+                "messages": ["Writer 完成研报撰写"],
+            }
+
+        with (
+            patch("src.agent.workflow.planner_node", mock_planner),
+            patch("src.agent.workflow.researcher_node", mock_researcher),
+            patch("src.agent.workflow.evaluator_node", mock_evaluator),
+            patch("src.agent.workflow.writer_node", mock_writer),
+        ):
+            # 测试自动化全闭环时显式关闭 HITL 拦截
+            test_app = create_research_graph(enable_hitl=False)
+            initial_input = {
+                "topic": "全自动测试课题",
+                "collected_data": [],
+                "messages": [],
+                "retry_count": 0,
+                "is_approved": False,
+            }
+            config = {"configurable": {"thread_id": "auto-test-thread-id"}}
+            result = asyncio.run(test_app.ainvoke(initial_input, config=config))
+            self.assertIsNotNone(result.get("final_report"))
+            self.assertIn("自动化研报", result["final_report"])
+            self.assertEqual(result.get("topic"), "全自动测试课题")
+            self.assertTrue(result.get("evaluation").is_approved)
+
+            # 同时验证无 checkpointer 模式（纯内存单次执行）
+            stateless_app = create_research_graph(checkpointer=False, enable_hitl=False)
+            stateless_result = asyncio.run(stateless_app.ainvoke(initial_input))
+            self.assertIsNotNone(stateless_result.get("final_report"))
+
 
 if __name__ == "__main__":
     unittest.main()

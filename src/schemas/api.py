@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from src.schemas.domain import Plan
 
@@ -31,12 +31,25 @@ class ResumeResearchRequest(BaseModel):
     task_id: str = Field(..., description="之前返回的任务 ID")
     approved_queries: Optional[List[str]] = Field(
         None,
+        min_length=1,
         description="人类修改或确认后的搜索关键词。若传 None 则按 Planner 默认规划执行",
     )
     queries: Optional[List[str]] = Field(
         None,
+        min_length=1,
         description="兼容别名字段：同 approved_queries",
     )
+
+    @field_validator("approved_queries", "queries")
+    @classmethod
+    def validate_non_empty_queries(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        """防呆校验：若传入列表，禁止空列表或纯空白字符串关键词。"""
+        if v is not None:
+            cleaned = [q.strip() for q in v if q and q.strip()]
+            if not cleaned:
+                raise ValueError("检索关键词列表不能为空，请至少提供一个有效检索词")
+            return cleaned
+        return v
 
 
 class ResearchRequest(BaseModel):

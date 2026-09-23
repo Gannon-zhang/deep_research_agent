@@ -1,10 +1,20 @@
 import json
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator, Optional
 
 from src.agent.workflow import graph_app
 from src.core.logger import get_logger
+from src.schemas.domain import NodeName
 
 logger = get_logger(__name__)
+
+
+def _extract_latest_message(output_data: Any) -> Optional[str]:
+    """从节点输出（支持 dict 或具有 messages 属性的 Pydantic 模型/对象）提取最新一条阶段性简报。"""
+    if hasattr(output_data, "messages") and output_data.messages:
+        return output_data.messages[-1]
+    if isinstance(output_data, dict) and output_data.get("messages"):
+        return output_data["messages"][-1]
+    return None
 
 
 async def research_event_generator(topic: str) -> AsyncGenerator[str, None]:
@@ -83,22 +93,21 @@ async def resume_research_event_generator(config: Any) -> AsyncGenerator[str, No
 
             # 监听节点流转启动
             if kind == "on_chain_start" and name in [
-                "researcher",
-                "evaluator",
-                "writer",
+                NodeName.RESEARCHER,
+                NodeName.EVALUATOR,
+                NodeName.WRITER,
             ]:
                 logger.debug("工作流节点启动: %s", name)
                 yield f"data: {json.dumps({'type': 'node_start', 'node': name}, ensure_ascii=False)}\n\n"
 
             # 监听节点流转完成
-            elif kind == "on_chain_end" and name in ["researcher", "evaluator"]:
+            elif kind == "on_chain_end" and name in [
+                NodeName.RESEARCHER,
+                NodeName.EVALUATOR,
+            ]:
                 output_data = event.get("data", {}).get("output")
-                if (
-                    isinstance(output_data, dict)
-                    and "messages" in output_data
-                    and output_data["messages"]
-                ):
-                    latest_msg = output_data["messages"][-1]
+                latest_msg = _extract_latest_message(output_data)
+                if latest_msg:
                     logger.debug("工作流节点完成: %s | 摘要: %s", name, latest_msg)
                     yield f"data: {json.dumps({'type': 'status_update', 'node': name, 'message': latest_msg}, ensure_ascii=False)}\n\n"
 
@@ -128,26 +137,22 @@ def _format_sse_event(event: dict) -> str:
 
     # 1. 节点生命周期：启动事件
     if kind == "on_chain_start" and name in [
-        "planner",
-        "researcher",
-        "evaluator",
-        "writer",
+        NodeName.PLANNER,
+        NodeName.RESEARCHER,
+        NodeName.EVALUATOR,
+        NodeName.WRITER,
     ]:
         return f"data: {json.dumps({'type': 'node_start', 'node': name}, ensure_ascii=False)}\n\n"
 
     # 2. 节点生命周期：完成事件，推送阶段性简报
     elif kind == "on_chain_end" and name in [
-        "planner",
-        "researcher",
-        "evaluator",
+        NodeName.PLANNER,
+        NodeName.RESEARCHER,
+        NodeName.EVALUATOR,
     ]:
         output_data = event.get("data", {}).get("output")
-        if (
-            isinstance(output_data, dict)
-            and "messages" in output_data
-            and output_data["messages"]
-        ):
-            latest_msg = output_data["messages"][-1]
+        latest_msg = _extract_latest_message(output_data)
+        if latest_msg:
             return f"data: {json.dumps({'type': 'status_update', 'node': name, 'message': latest_msg}, ensure_ascii=False)}\n\n"
 
     # 3. 大模型 Token 流：仅在 writer 撰写研报时向前端逐字输出正文

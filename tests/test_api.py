@@ -120,6 +120,23 @@ class TestAPI(unittest.TestCase):
             response = self.client.post("/api/research/resume/stream", json=payload)
             self.assertEqual(response.status_code, 400)
 
+    def test_resume_research_empty_queries_validation(self):
+        # 1. 传空数组 [] 应当触发 422 校验失败
+        payload_empty = {
+            "task_id": "test-task-uuid-123",
+            "approved_queries": [],
+        }
+        res_empty = self.client.post("/api/research/resume/stream", json=payload_empty)
+        self.assertEqual(res_empty.status_code, 422)
+
+        # 2. 传纯空白字符应当触发 422 校验失败
+        payload_blank = {
+            "task_id": "test-task-uuid-123",
+            "approved_queries": ["   ", ""],
+        }
+        res_blank = self.client.post("/api/research/resume/stream", json=payload_blank)
+        self.assertEqual(res_blank.status_code, 422)
+
 
 if __name__ == "__main__":
     unittest.main()

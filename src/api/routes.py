@@ -10,7 +10,7 @@ from src.schemas.api import (
     StartResearchRequest,
     StartResearchResponse,
 )
-from src.schemas.domain import Plan
+from src.schemas.domain import NodeName, Plan
 from src.api.streaming import (
     research_event_generator,
     resume_research_event_generator,
@@ -121,7 +121,7 @@ async def resume_research_stream(request: ResumeResearchRequest) -> StreamingRes
         )
         logger.info("应用人工调整的关键词提纲并更新状态: %s", target_queries)
         # as_node 指定是以哪个节点的视角来更新状态
-        graph_app.update_state(config, {"plan": updated_plan}, as_node="planner")
+        graph_app.update_state(config, {"plan": updated_plan}, as_node=NodeName.PLANNER)
     else:
         logger.info("用户未传入修改词，按 Planner 默认规划原样继续执行")
 

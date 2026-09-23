@@ -63,8 +63,13 @@ def create_research_graph(
     )
     workflow.add_edge(NodeName.WRITER, END)
 
-    # 实例化检查点
-    saver = checkpointer if checkpointer is not None else MemorySaver()
+    # 实例化检查点：若显式传 False 则不启用检查点，若为 None 则默认 MemorySaver()
+    if checkpointer is False:
+        saver = None
+    elif checkpointer is not None:
+        saver = checkpointer
+    else:
+        saver = MemorySaver()
 
     # 中断拦截逻辑
     if interrupt_before is not None:
