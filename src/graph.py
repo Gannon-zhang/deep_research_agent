@@ -15,11 +15,19 @@ class NodeName(StrEnum):
 
 def should_continue(state: State) -> str:
     """条件路由函数：根据 evaluator 的评审结果决定走向"""
-    is_approved = state.is_approved
+    evaluation = state.evaluation
     retry_count = state.retry_count
 
-    if is_approved or retry_count >= 2:
+    # 满足以下任一条件即可放行撰写：
+    # 1. 质检审查通过 (is_approved 为 True)
+    # 2. 重试次数达到 2 次上限（熔断降级保护，避免死循环消耗 Token）
+    if evaluation and evaluation.is_approved:
         return NodeName.WRITER
+
+    if retry_count >= 2:
+        print("  ⚠️ 达到最大重试上限，强制降级进入报告撰写。")
+        return NodeName.WRITER
+
     return NodeName.RESEARCHER
 
 

@@ -6,7 +6,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from dotenv import load_dotenv
 
-from src.state import State, Plan
+from src.state import State, Plan, EvaluationResult
 from src.tools import web_search_tool
 
 load_dotenv()
@@ -57,16 +57,20 @@ def planner_node(state: State) -> Dict[str, Any]:
 
 def researcher_node(state: State) -> Dict[str, Any]:
     """根据当前 plan，结合现有的 review_comment（若有打回意见），模拟搜集事实数据，将新发现追加到 collected_data"""
+    print("\n--- [Node: Researcher] 执行资料搜集 ---")
     plan = state.plan
-    review_comment = state.review_comment
+    evaluation = state.evaluation
     retry_count = state.retry_count
 
     new_evidences = []
 
-    if review_comment and retry_count > 0:
-        print(f"  ⚠️ 收到改进要求: {review_comment}，针对性定向检索...")
-        supplementary_query = f"{state.topic} 深度数据 市场规模 工业标准"
-        new_evidences.extend(web_search_tool(supplementary_query, max_results=2))
+    # 场景 A：被 Evaluator 打回，执行针对性靶向检索
+    if evaluation and not evaluation.is_approved and evaluation.suggested_queries:
+        print(f"  🔄 执行第 {retry_count} 轮补漏检索...")
+        for query in evaluation.suggested_queries:
+            results = web_search_tool(query, max_results=2)
+            new_evidences.extend(results)
+    # 场景 B：首轮按 Plan 规划检索
     elif plan and plan.queries:
         for query in plan.queries:
             results = web_search_tool(query, max_results=2)
@@ -74,7 +78,7 @@ def researcher_node(state: State) -> Dict[str, Any]:
 
     return {
         "collected_data": new_evidences,
-        "messages": [f"Researcher 本轮检索到了 {len(new_evidences)} 条真实证据。"],
+        "messages": [f"Researcher 新增获取 {len(new_evidences)} 条事实素材。"],
     }
 
 
@@ -84,25 +88,64 @@ def evaluator_node(state: State) -> Dict[str, Any]:
     •若素材不足 2 条或缺少核心数据，则设置 is_approved = False，并生成改进建议 review_comment，将 retry_count + 1。
     •若满足要求，设置 is_approved = True。
     """
+    print("\n--- [Node: Evaluator] 智能质检审查中 ---")
+    topic = state.topic
     collected_data = state.collected_data
     retry_count = state.retry_count
 
-    if len(collected_data) < 2 and retry_count < 2:
-        comment = "数据量不足，缺少更多维度的交叉比对，请再提供一条深度数据。"
-        print(f"-> 质检不合格，打回重试（当前已重试 {retry_count} 次）")
-        return {
-            "is_approved": False,
-            "review_comment": comment,
-            "retry_count": retry_count + 1,
-            "messages": ["Evaluator 判定数据不足，打回重试。"],
-        }
-    else:
-        print("-> 质检通过，允许撰写报告。")
-        return {
-            "is_approved": True,
-            "review_comment": None,
-            "messages": ["Evaluator 判定数据充实，审核通过。"],
-        }
+    # 格式化当前搜集到的所有证据供审查
+    evidence_text = "\n".join(
+        [f"- [{ev.title}]: {ev.snippet}" for ev in collected_data]
+    )
+
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                (
+                    "你是一名极为严格的科技智库首席研究主管。\n"
+                    "你的任务是审查研究员搜集到的素材是否足以支撑一篇权威、有深度的数据研报。\n"
+                    "审查维度：\n"
+                    "1. 证据是否具体？（拒绝泛泛而谈的公关稿，需要具体的指标、成本、量产年份或工程痛点）\n"
+                    "2. 论据是否全面？是否只覆盖了课题的单一视角？\n"
+                    "规则：若素材不足以支撑完整分析，或者缺乏硬核数据，请将 is_approved 设为 False，"
+                    "并在 suggested_queries 中给出 2 个精准的补充搜索关键词。打分 7 分及以上才算合格。"
+                ),
+            ),
+            (
+                "human",
+                (
+                    "课题：《{topic}》\n\n"
+                    "当前已收集素材（共 {count} 条）：\n{evidence_text}\n\n"
+                    "请给出严谨的评估结果。"
+                ),
+            ),
+        ]
+    )
+
+    structured_evaluator = get_llm(temperature=0.1).with_structured_output(
+        EvaluationResult
+    )
+    chain = prompt | structured_evaluator
+
+    eval_result: EvaluationResult = chain.invoke(
+        {"topic": topic, "count": len(collected_data), "evidence_text": evidence_text}
+    )
+
+    print(
+        f"  📊 质检评分: {eval_result.score}/10 | 是否通过: {eval_result.is_approved}"
+    )
+    print(f"  📝 评审意见: {eval_result.critique}")
+    if not eval_result.is_approved:
+        print(f"  🎯 下发定向补充词: {eval_result.suggested_queries}")
+
+    return {
+        "evaluation": eval_result,
+        "retry_count": retry_count + 1 if not eval_result.is_approved else retry_count,
+        "messages": [
+            f"Evaluator 评分 {eval_result.score}，判定: {'通过' if eval_result.is_approved else '打回重补'}"
+        ],
+    }
 
 
 def writer_node(state: State) -> Dict[str, Any]:
