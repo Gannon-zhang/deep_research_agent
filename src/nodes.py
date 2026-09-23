@@ -6,7 +6,8 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from dotenv import load_dotenv
 
-from src.state import State
+from src.state import State, Plan
+from src.tools import web_search_tool
 
 load_dotenv()
 
@@ -28,44 +29,52 @@ def planner_node(state: State) -> Dict[str, Any]:
     if not topic:
         return {"messages": ["Planner: 未提供 topic。"]}
 
-    prompt = ChatPromptTemplate.from_template(
-        "你是一个资深产业分析师。请针对课题《{topic}》，列出 3 个核心调研要点与子问题，分行输出。"
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                "你是一个资深产业分析师。请针对用户的课题制定精准的外部检索调研规划。",
+            ),
+            (
+                "human",
+                "课题：《{topic}》\n请拆解出用于外部检索的关键词 queries（3~4个），并给出拆解依据 rationale。",
+            ),
+        ]
     )
-    chain = prompt | get_llm()
-    response = chain.invoke({"topic": topic})
+
+    structured_llm = get_llm(temperature=0.2).with_structured_output(Plan)
+    chain = prompt | structured_llm
+
+    plan_result: Plan = chain.invoke({"topic": topic})
 
     return {
-        "plan": response.content,
-        "messages": [f"Planner 已制定计划：{response.content[:30]}..."],
+        "plan": plan_result,
+        "messages": [
+            f"Planner 生成了 {len(plan_result.queries)} 个检索词: {plan_result.queries}"
+        ],
     }
 
 
 def researcher_node(state: State) -> Dict[str, Any]:
     """根据当前 plan，结合现有的 review_comment（若有打回意见），模拟搜集事实数据，将新发现追加到 collected_data"""
-    topic = state.topic
     plan = state.plan
     review_comment = state.review_comment
     retry_count = state.retry_count
 
-    # 如果被打回，提示词中加入打回意见进行针对性补充
-    feedback_context = (
-        f"\n上轮审查未通过原因: {review_comment}，请重点针对性补充。"
-        if review_comment
-        else ""
-    )
+    new_evidences = []
 
-    prompt = ChatPromptTemplate.from_template(
-        "课题: {topic}\n调研计划: {plan}{feedback}\n"
-        "请提供一条有具体数据、案例支撑的关键事实论据（100字左右）。"
-    )
-    chain = prompt | get_llm()
-    response = chain.invoke(
-        {"topic": topic, "plan": plan, "feedback": feedback_context}
-    )
+    if review_comment and retry_count > 0:
+        print(f"  ⚠️ 收到改进要求: {review_comment}，针对性定向检索...")
+        supplementary_query = f"{state.topic} 深度数据 市场规模 工业标准"
+        new_evidences.extend(web_search_tool(supplementary_query, max_results=2))
+    elif plan and plan.queries:
+        for query in plan.queries:
+            results = web_search_tool(query, max_results=2)
+            new_evidences.extend(results)
 
     return {
-        "collected_data": [response.content],
-        "messages": [f"Researcher 第 {retry_count + 1} 次提供了新数据。"],
+        "collected_data": new_evidences,
+        "messages": [f"Researcher 本轮检索到了 {len(new_evidences)} 条真实证据。"],
     }
 
 
@@ -101,12 +110,33 @@ def writer_node(state: State) -> Dict[str, Any]:
     topic = state.topic
     collected_data = state.collected_data
 
-    data_text = "\n\n".join(collected_data)
-    prompt = ChatPromptTemplate.from_template(
-        "课题: {topic}\n\n参考论据:\n{data_text}\n\n"
-        "请结合上述论据，写一份结构清晰、结论明确的深度调研摘要（Markdown 格式）。"
-    )
-    chain = prompt | get_llm()
-    response = chain.invoke({"topic": topic, "data_text": data_text})
+    context_blocks = []
+    for idx, ev in enumerate(collected_data, 1):
+        context_blocks.append(
+            f"[{idx}] 标题: {ev.title}\n链接: {ev.url}\n内容: {ev.snippet}"
+        )
+    context_str = "\n\n".join(context_blocks)
 
-    return {"final_report": response.content, "messages": ["Writer 已完成研报撰写。"]}
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                (
+                    "你是一个严谨的产业研究分析师。\n"
+                    "规则：\n"
+                    "1. 必须基于提供的【参考论据】撰写一份高质量的 Markdown 报告。\n"
+                    "2. 正文在陈述事实和数据时，必须标注对应的引用角标，如 [1] 或 [2]。\n"
+                    "3. 报告末尾必须附带【参考来源】章节，列出引用的编号、标题和原 URL。"
+                ),
+            ),
+            ("human", "课题：《{topic}》\n\n【参考论据如下】：\n{context}"),
+        ]
+    )
+
+    chain = prompt | get_llm(temperature=0.4)
+    response = chain.invoke({"topic": topic, "context": context_str})
+
+    return {
+        "final_report": response.content,
+        "messages": ["Writer 已完成附带引用来源的深度研报。"],
+    }
