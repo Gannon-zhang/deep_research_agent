@@ -33,7 +33,7 @@
 ```mermaid
 flowchart TD
     Start([START]) --> Planner[Planner: 课题多维度规划]
-    Planner --> Researcher[Researcher: 外部事实检索\n(Tavily / DuckDuckGo 自动兜底)]
+    Planner --> Researcher[Researcher: 外部事实检索\n Tavily / DuckDuckGo 自动兜底]
     Researcher --> Evaluator[Evaluator: 深度质量审查]
 
     Evaluator -- "评分 < 7 且未达重试上限\n(打回补漏)" --> Researcher
