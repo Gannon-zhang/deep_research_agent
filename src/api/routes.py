@@ -2,7 +2,7 @@ import uuid
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
-from src.agent.workflow import app as agent_app
+from src.agent.workflow import graph_app
 from src.core.logger import get_logger
 from src.schemas.api import (
     ResearchRequest,
@@ -18,26 +18,27 @@ from src.api.streaming import (
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api/research", tags=["Research"])
+
+router = APIRouter(prefix="/api/research", tags=["Deep Research Agent"])
 
 
 @router.post("/start", response_model=StartResearchResponse)
 async def start_research(request: StartResearchRequest) -> StartResearchResponse:
-    """第一阶段调用接口：创建调研任务，执行至 Planner 生成大纲后自动挂起中断。
+    """第一阶段调用接口：接收课题，执行 Planner，随后自动挂起等待人工审核。
 
-    前端获取生成的课题拆解关键词列表，呈现给用户进行人工核准或修改调整。
+    执行到 `interrupt_before=['researcher']` 时会自动暂停并保存状态到检查点。
 
     Args:
         request: 包含课题与可选 task_id 的请求体 (StartResearchRequest)。
 
     Returns:
-        StartResearchResponse: 包含 task_id、课题及 Planner 生成的 Plan 提纲。
+        StartResearchResponse: 包含 task_id、课题及 Planner 生成的候选提纲规划。
     """
     task_id = request.task_id or str(uuid.uuid4())
     config = {"configurable": {"thread_id": task_id}}
 
     logger.info(
-        "收到第一阶段创建调研任务请求 | 课题: %s | task_id: %s", request.topic, task_id
+        "收到第一阶段启动调研请求 | 课题: %s | task_id: %s", request.topic, task_id
     )
 
     initial_input = {
@@ -49,84 +50,84 @@ async def start_research(request: StartResearchRequest) -> StartResearchResponse
     }
 
     try:
-        # 执行第一阶段：图流转到 Planner 节点后触发 interrupt_after 挂起
-        await agent_app.ainvoke(initial_input, config=config)
+        # 执行到 interrupt_before=['researcher'] 时会自动暂停并保存状态
+        await graph_app.ainvoke(initial_input, config=config)
 
-        # 获取断点处的检查点状态
-        state = await agent_app.aget_state(config)
-        generated_plan: Plan = state.values.get("plan")
+        # 从检查点中取出当前的快照状态
+        snapshot = graph_app.get_state(config)
+        current_plan: Plan = snapshot.values.get("plan")
 
         logger.info(
-            "第一阶段顺利挂起等待审核 | task_id: %s | 生成关键词数: %d",
+            "第一阶段顺利挂起等待人工审核 | task_id: %s | 生成关键词数: %d",
             task_id,
-            len(generated_plan.queries) if generated_plan else 0,
+            len(current_plan.queries) if current_plan else 0,
         )
 
         return StartResearchResponse(
             task_id=task_id,
             topic=request.topic,
-            plan=generated_plan,
-            status="awaiting_approval",
-            message="Planner 规划已生成，工作流在断点处成功挂起，等待人工确认或修改检索大纲。",
+            plan=current_plan,
+            status="waiting_for_approval",
         )
     except Exception as e:
         logger.error(
-            "第一阶段任务启动执行发生异常 | task_id: %s: %s", task_id, e, exc_info=True
+            "第一阶段任务执行发生异常 | task_id: %s: %s", task_id, e, exc_info=True
         )
         raise HTTPException(status_code=500, detail=f"启动调研任务失败: {e}")
 
 
+@router.post("/resume/stream")
 @router.post("/resume")
-async def resume_research(request: ResumeResearchRequest) -> StreamingResponse:
-    """第二阶段调用接口：接收用户核准或修改后的关键词提纲，以 SSE 流式从断点恢复执行。
+async def resume_research_stream(request: ResumeResearchRequest) -> StreamingResponse:
+    """第二阶段调用接口：接收人工审核/修改后的关键词，恢复执行后续检索、质检与撰写，并 SSE 流式返回。
 
-    后续节点顺序：Researcher (并发检索) $\\rightarrow$ Evaluator (严格质检) $\\rightarrow$ Writer (撰写研报)。
+    若用户传入 approved_queries，使用 update_state(as_node="planner") 覆盖状态后再从断点恢复执行。
 
     Args:
-        request: 包含 task_id 及用户修正后检索词列表的请求体 (ResumeResearchRequest)。
+        request: 包含 task_id 与用户审核确认或修改后的关键词列表 (ResumeResearchRequest)。
 
     Returns:
-        StreamingResponse: text/event-stream 格式的实时 SSE 事件流。
+        StreamingResponse: text/event-stream 协议的流式响应对象。
     """
     task_id = request.task_id
     config = {"configurable": {"thread_id": task_id}}
 
     logger.info("收到第二阶段恢复执行请求 | task_id: %s", task_id)
 
-    # 1. 校验当前断点有效性
-    current_state = await agent_app.aget_state(config)
-    if not current_state or not current_state.values:
+    snapshot = graph_app.get_state(config)
+    if not snapshot or not snapshot.values:
+        raise HTTPException(status_code=404, detail="未找到指定任务或任务状态已过期")
+
+    if not snapshot.next:
         raise HTTPException(
-            status_code=404,
-            detail=f"未找到 task_id '{task_id}' 对应的任务状态或已过期。",
+            status_code=400, detail="该任务不存在、已完成或未处于挂起状态"
         )
 
-    if not current_state.next:
-        raise HTTPException(
-            status_code=400,
-            detail=f"任务 '{task_id}' 已处于完成状态，无可恢复的挂起断点。",
-        )
+    # 优先取 approved_queries，兼顾 queries 别名
+    target_queries = (
+        request.approved_queries
+        if request.approved_queries is not None
+        else request.queries
+    )
 
-    # 2. 如果用户提供了修订后的关键词或 Plan，使用 aupdate_state 覆盖状态
-    if request.plan:
-        logger.info("用户提供了完整修订后的 Plan 对象，执行覆盖更新")
-        await agent_app.aupdate_state(config, {"plan": request.plan})
-    elif request.queries:
-        logger.info("用户修订了检索关键词列表: %s，执行覆盖更新", request.queries)
-        orig_plan: Plan = current_state.values.get("plan")
+    # 如果人类用户修改或确认了关键词，使用 update_state 覆盖 Plan 中的 queries
+    if target_queries is not None:
+        old_plan: Plan = snapshot.values.get("plan")
         updated_plan = Plan(
-            queries=request.queries,
-            rationale=orig_plan.rationale
-            if orig_plan
-            else "经由用户人工审核确认与修订",
+            queries=target_queries,
+            rationale=f"{old_plan.rationale} (经人工审核调整)"
+            if old_plan
+            else "经人工审核调整",
         )
-        await agent_app.aupdate_state(config, {"plan": updated_plan})
+        logger.info("应用人工调整的关键词提纲并更新状态: %s", target_queries)
+        # as_node 指定是以哪个节点的视角来更新状态
+        graph_app.update_state(config, {"plan": updated_plan}, as_node="planner")
     else:
-        logger.info("用户未修改提纲，原样确认放行恢复执行")
+        logger.info("用户未传入修改词，按 Planner 默认规划原样继续执行")
 
-    # 3. 以 SSE 流式恢复执行后续阶段
+    # 通过 SSE 流式执行后续链路
     return StreamingResponse(
-        resume_research_event_generator(task_id),
+        resume_research_event_generator(config),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

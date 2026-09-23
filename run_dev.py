@@ -10,7 +10,7 @@ import asyncio
 import sys
 import uuid
 
-from src.agent import app
+from src.agent import graph_app
 from src.core.logger import get_logger, setup_logging
 from src.schemas.domain import Plan
 
@@ -39,14 +39,14 @@ async def main() -> None:
     logger.info("调研课题: %s", topic)
 
     # 1. 执行第一阶段：图流转到 Planner 节点后自动触发断点中断挂起
-    await app.ainvoke(initial_input, config=config)
+    await graph_app.ainvoke(initial_input, config=config)
 
     # 2. 从 Checkpointer 检查点中获取当前挂起状态
-    state_after_planner = await app.aget_state(config)
+    state_after_planner = await graph_app.aget_state(config)
     generated_plan: Plan = state_after_planner.values.get("plan")
     next_nodes = state_after_planner.next
 
-    logger.info("【断点检测成功】工作流已在 Planner 执行后挂起！")
+    logger.info("【断点检测成功】工作流已在进入 Researcher 前成功挂起！")
     logger.info("下一阶段待执行节点: %s", next_nodes)
     if generated_plan:
         logger.info("Planner 生成的检索关键词: %s", generated_plan.queries)
@@ -67,15 +67,17 @@ async def main() -> None:
         "用户人工修正后的关键词列表 (%d 个): %s", len(revised_queries), revised_queries
     )
 
-    # 4. 使用 aupdate_state 覆盖工作流状态
-    logger.info("调用 app.aupdate_state 覆盖写入修正后的 Plan 状态...")
-    await app.aupdate_state(config, {"plan": revised_plan})
+    # 4. 使用 aupdate_state 覆盖工作流状态（as_node='planner'）
+    logger.info(
+        "调用 graph_app.aupdate_state(as_node='planner') 覆盖写入修正后的 Plan 状态..."
+    )
+    await graph_app.aupdate_state(config, {"plan": revised_plan}, as_node="planner")
 
     # 5. 执行第二阶段：传入 None 从挂起断点恢复流转至最终研报完成
     logger.info(
         "\n====== 【阶段二】从断点恢复执行 (Researcher -> Evaluator -> Writer) ======"
     )
-    result = await app.ainvoke(None, config=config)
+    result = await graph_app.ainvoke(None, config=config)
 
     # 6. 输出执行统计信息与最终成果
     collected_count = len(result.get("collected_data", []))

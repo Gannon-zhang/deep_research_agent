@@ -32,15 +32,15 @@ async def evaluator_node(state: State) -> Dict[str, Any]:
 
     logger.info("Evaluator 质检节点启动 | 待审查素材总量: %d 条", len(collected_data))
 
-    # 格式化当前已积累的所有证据摘要供模型审查
+    # 格式化当前已积累的所有证据摘要供模型审查（单条上限截断，避免超出小模型上下文或最大输出Token限制）
     evidence_text = "\n".join(
-        [f"- [{ev.title}]: {ev.snippet}" for ev in collected_data]
+        [f"- [{ev.title}]: {ev.snippet[:400]}" for ev in collected_data[:12]]
     )
 
-    # 质检采用严谨的低温度输出
-    structured_evaluator = get_llm(temperature=0.1).with_structured_output(
-        EvaluationResult
-    )
+    # 质检采用严谨的低温度输出，设定足够长 max_tokens 防止 JSON 截断报错
+    structured_evaluator = get_llm(
+        temperature=0.1, max_tokens=2048
+    ).with_structured_output(EvaluationResult)
     chain = EVALUATOR_PROMPT | structured_evaluator
 
     eval_result: EvaluationResult = await chain.ainvoke(

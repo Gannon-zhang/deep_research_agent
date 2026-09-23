@@ -8,7 +8,12 @@ from src.agent.nodes.planner import planner_node
 from src.agent.nodes.researcher import researcher_node
 from src.agent.nodes.writer import writer_node
 from src.agent.router import NodeName, should_continue
-from src.agent.workflow import build_graph, app
+from src.agent.workflow import (
+    app,
+    build_graph,
+    create_research_graph,
+    graph_app,
+)
 from src.schemas.domain import EvaluationResult, Evidence, Plan
 from src.schemas.state import State
 
@@ -70,15 +75,17 @@ class TestGraphWorkflow(unittest.TestCase):
         self.assertEqual(next_node, NodeName.WRITER)
 
     def test_graph_compiled_structure(self):
+        self.assertIsNotNone(graph_app)
         self.assertIsNotNone(app)
-        compiled_nodes = app.nodes
+        compiled_nodes = graph_app.nodes
         self.assertIn("planner", compiled_nodes)
         self.assertIn("researcher", compiled_nodes)
         self.assertIn("evaluator", compiled_nodes)
         self.assertIn("writer", compiled_nodes)
 
     def test_build_graph_custom_instance(self):
-        new_app = build_graph()
+        self.assertIs(build_graph, create_research_graph)
+        new_app = create_research_graph(enable_hitl=False)
         self.assertIsNotNone(new_app)
         self.assertIn("planner", new_app.nodes)
 
@@ -115,8 +122,8 @@ class TestGraphWorkflow(unittest.TestCase):
         self.assertEqual(len(result["collected_data"]), 3)
         self.assertIn("Researcher 新增获取 3 条事实素材", result["messages"][0])
 
-    def test_interrupt_after_planner_and_resume(self):
-        """测试在 Planner 执行后自动断点中断，支持 aupdate_state 覆盖状态与保留下一步。"""
+    def test_hitl_interrupt_before_researcher_and_resume(self):
+        """测试在进入 Researcher 节点前自动断点中断 (HITL)，支持 update_state 覆盖状态与恢复流转。"""
         import uuid
         from langgraph.checkpoint.memory import MemorySaver
 
@@ -130,15 +137,15 @@ class TestGraphWorkflow(unittest.TestCase):
 
         with patch("src.agent.workflow.planner_node", mock_planner):
             test_saver = MemorySaver()
-            test_graph = build_graph(
-                checkpointer=test_saver, interrupt_after=[NodeName.PLANNER]
+            test_graph = create_research_graph(
+                checkpointer=test_saver, enable_hitl=True
             )
 
         task_id = str(uuid.uuid4())
         config = {"configurable": {"thread_id": task_id}}
 
         async def run_test():
-            # 第一阶段：执行至 Planner 挂起
+            # 第一阶段：执行至 Planner 挂起在 Researcher 之前
             await test_graph.ainvoke({"topic": "测试课题"}, config=config)
 
             # 验证命中中断挂起，下一节点为 researcher
@@ -146,9 +153,11 @@ class TestGraphWorkflow(unittest.TestCase):
             self.assertEqual(state1.next, (NodeName.RESEARCHER,))
             self.assertEqual(state1.values.get("plan").queries, ["原词1", "原词2"])
 
-            # 模拟人工修改：覆盖更新状态
+            # 模拟人工修改：覆盖更新状态 (as_node="planner")
             revised_plan = Plan(queries=["修正词A", "修正词B"], rationale="人工修正")
-            await test_graph.aupdate_state(config, {"plan": revised_plan})
+            await test_graph.aupdate_state(
+                config, {"plan": revised_plan}, as_node="planner"
+            )
 
             state2 = await test_graph.aget_state(config)
             self.assertEqual(state2.values.get("plan").queries, ["修正词A", "修正词B"])

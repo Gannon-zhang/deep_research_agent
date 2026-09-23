@@ -22,6 +22,7 @@ class Settings:
         )
         self.openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
         self.model_name: str = os.getenv("MODEL_NAME", "google/gemma-4-e4b")
+        self.max_tokens: int = int(os.getenv("MAX_TOKENS", "4096"))
 
         # 外部搜索服务配置 (Tavily, DuckDuckGo 等)
         self.tavily_api_key: Optional[str] = os.getenv("TAVILY_API_KEY")

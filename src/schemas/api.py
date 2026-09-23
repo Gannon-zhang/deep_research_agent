@@ -1,63 +1,50 @@
 from typing import List, Optional
+
 from pydantic import BaseModel, Field
 
 from src.schemas.domain import Plan
 
 
+class StartResearchRequest(BaseModel):
+    """第一阶段创建并启动调研任务请求体。"""
+
+    topic: str = Field(
+        ..., description="调研课题名称", examples=["2026年具身智能商业化瓶颈"]
+    )
+    task_id: Optional[str] = Field(
+        None, description="任务会话唯一标识(thread_id)，若不传则后端自动生成"
+    )
+
+
+class StartResearchResponse(BaseModel):
+    """第一阶段响应体：包含生成的 Plan 提纲，当前状态为等待人类审核。"""
+
+    task_id: str = Field(..., description="任务会话唯一标识(thread_id)")
+    topic: str = Field(..., description="课题名称")
+    plan: Optional[Plan] = Field(None, description="由 Planner 生成的候选提纲规划")
+    status: str = Field("waiting_for_approval", description="当前状态：等待人类审核")
+
+
+class ResumeResearchRequest(BaseModel):
+    """第二阶段恢复执行请求体：提供 task_id 与人工确认/修改的关键词。"""
+
+    task_id: str = Field(..., description="之前返回的任务 ID")
+    approved_queries: Optional[List[str]] = Field(
+        None,
+        description="人类修改或确认后的搜索关键词。若传 None 则按 Planner 默认规划执行",
+    )
+    queries: Optional[List[str]] = Field(
+        None,
+        description="兼容别名字段：同 approved_queries",
+    )
+
+
 class ResearchRequest(BaseModel):
-    """调研 API 请求协议模型（兼容端点）。"""
+    """调研 API 请求协议模型（兼容直接流式端点）。"""
 
     topic: str = Field(
         ...,
         description="调研课题名称或研究方向，需具备一定的具体性",
         examples=["2026年具身智能商业化落地工程瓶颈"],
         min_length=2,
-    )
-
-
-class StartResearchRequest(BaseModel):
-    """第一阶段启动任务请求体。"""
-
-    topic: str = Field(
-        ...,
-        description="调研课题名称",
-        examples=["2026年具身智能机器人量产落地的主要工程瓶颈"],
-        min_length=2,
-    )
-    task_id: Optional[str] = Field(
-        default=None,
-        description="任务唯一 UUID；若未指定则由后端自动生成",
-    )
-
-
-class StartResearchResponse(BaseModel):
-    """第一阶段启动任务响应体：返回生成的规划与任务ID，工作流进入挂起等待状态。"""
-
-    task_id: str = Field(description="任务唯一标识 UUID (thread_id)")
-    topic: str = Field(description="调研课题")
-    plan: Optional[Plan] = Field(
-        default=None, description="Planner 生成的研究大纲与检索关键词"
-    )
-    status: str = Field(
-        default="awaiting_approval",
-        description="当前任务状态，默认 awaiting_approval 等待人工审核",
-    )
-    message: str = Field(
-        default="Planner 规划已生成，工作流在断点处成功挂起，等待人工确认或修改检索大纲。",
-        description="状态描述信息",
-    )
-
-
-class ResumeResearchRequest(BaseModel):
-    """第二阶段恢复任务请求体：提供任务ID，可传入修改后的关键词或确认原方案。"""
-
-    task_id: str = Field(..., description="第一阶段返回的任务唯一 UUID (thread_id)")
-    queries: Optional[List[str]] = Field(
-        default=None,
-        description="用户修正后的检索关键词列表；若为空且未传 plan 则默认原样确认 Planner 结果",
-        examples=[["具身智能 硬件瓶颈 2026", "人形机器人 关节电机 成本"]],
-    )
-    plan: Optional[Plan] = Field(
-        default=None,
-        description="完整的修正后 Plan 对象（可选，与 queries 二选一即可）",
     )

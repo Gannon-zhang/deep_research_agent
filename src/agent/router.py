@@ -1,19 +1,9 @@
-from enum import StrEnum
-
 from src.core.config import settings
 from src.core.logger import get_logger
+from src.schemas.domain import NodeName
 from src.schemas.state import State
 
 logger = get_logger(__name__)
-
-
-class NodeName(StrEnum):
-    """LangGraph 工作流中的节点唯一标识枚举。"""
-
-    PLANNER = "planner"
-    RESEARCHER = "researcher"
-    EVALUATOR = "evaluator"
-    WRITER = "writer"
 
 
 def should_continue(state: State) -> str:

@@ -1,5 +1,16 @@
+from enum import StrEnum
 from typing import List
+
 from pydantic import BaseModel, Field
+
+
+class NodeName(StrEnum):
+    """LangGraph 工作流中的节点唯一标识枚举。"""
+
+    PLANNER = "planner"
+    RESEARCHER = "researcher"
+    EVALUATOR = "evaluator"
+    WRITER = "writer"
 
 
 class Evidence(BaseModel):
